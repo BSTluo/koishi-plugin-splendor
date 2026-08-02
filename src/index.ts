@@ -12,6 +12,7 @@ const MAX_RESERVED_CARDS = 3;
 type GemColor = (typeof GEM_COLORS)[number];
 type GemBag = Record<GemColor, number>;
 type CardLevel = 1 | 2 | 3;
+type TokenColor = GemColor | 'gold';
 
 interface Card
 {
@@ -55,7 +56,7 @@ interface RoomState
   round: number;
   pool: GemBag;
   goldPool: number;
-  board: Record<CardLevel, Card[]>;
+  board: Record<CardLevel, Array<Card | undefined>>;
   deck: Record<CardLevel, Card[]>;
   nobles: Noble[];
   log: string[];
@@ -150,6 +151,17 @@ export function apply(ctx: Context, config: Config)
     }
   }
 
+  function replaceBoardCard(room: RoomState, level: CardLevel, slotIndex: number): void
+  {
+    room.board[level][slotIndex] = room.deck[level].shift();
+  }
+
+  function describeBoardSlot(level: CardLevel, slotIndex: number, card?: Card): string
+  {
+    if (!card) return `第${level}层第${slotIndex + 1}位：空`;
+    return `第${level}层第${slotIndex + 1}位：${card.title} (${GEM_EMOJIS[card.color]}${card.color}) 需:${formatCompactCost(card.cost)} 声望:${card.prestige}`;
+  }
+
   function getRoomByUser(rooms: Map<string, RoomState>, userId: string): RoomState | undefined
   {
     for (const room of rooms.values())
@@ -204,10 +216,23 @@ export function apply(ctx: Context, config: Config)
     return entries.length ? entries.join(', ') : '无';
   }
 
-  function formatBoard(level: CardLevel, cards: Card[]): string
+  function formatCompactCost(cost: Partial<GemBag>): string
+  {
+    const entries = GEM_COLORS.map(color =>
+    {
+      const count = cost[color] ?? 0;
+      return count > 0 ? `${GEM_EMOJIS[color]}${count}` : null;
+    }).filter(Boolean) as string[];
+    return entries.length ? entries.join(' ') : '免费';
+  }
+
+  function formatBoard(level: CardLevel, cards: Array<Card | undefined>): string
   {
     if (!cards.length) return `第${level}层：暂无卡牌`;
-    return cards.map((card, index) => `    ${index + 1}.${card.title}(${formatGemColor(card.color)}) 需:${formatCost(card.cost)} 声望:${card.prestige}`).join('；\n');
+    return cards.map((card, index) => card
+      ? `${index + 1}. ${GEM_EMOJIS[card.color]} ${card.title} | ⭐${card.prestige} | ${formatCompactCost(card.cost)}`
+      : `${index + 1}. （已无卡牌）`,
+    ).join('\n');
   }
 
   function formatReservedCards(cards: Card[]): string
@@ -230,6 +255,18 @@ export function apply(ctx: Context, config: Config)
   function getPlayerTokenCount(player: PlayerState): number
   {
     return GEM_COLORS.reduce((total, color) => total + player.gems[color], player.gold);
+  }
+
+  function getExcessTokenCount(player: PlayerState): number
+  {
+    return Math.max(0, getPlayerTokenCount(player) - MAX_PLAYER_TOKENS);
+  }
+
+  function formatDiscardPrompt(room: RoomState, player: PlayerState): string
+  {
+    const excess = getExcessTokenCount(player);
+    if (!excess) return '';
+    return `\n你当前持有 ${getPlayerTokenCount(player)} 枚筹码，需弃置 ${excess} 枚后才能继续行动。请输入：splendor.discard ${room.id} <颜色…>（可选 red、blue、green、black、white、gold）。`;
   }
 
   function canAfford(player: PlayerState, cost: Partial<GemBag>): boolean
@@ -332,6 +369,11 @@ export function apply(ctx: Context, config: Config)
   function isGemColor(value?: string): boolean
   {
     return !!value && (GEM_COLORS as readonly string[]).includes(value.toLowerCase());
+  }
+
+  function isTokenColor(value?: string): value is TokenColor
+  {
+    return !!value && (isGemColor(value) || value.toLowerCase() === 'gold');
   }
 
   function resolveRoomBySession(session: any, roomId?: string): RoomState | undefined
@@ -511,7 +553,7 @@ export function apply(ctx: Context, config: Config)
       const current = room.players[room.currentTurn];
       const gemPoolText = formatGemSummary(room.pool);
       const boardText = describeAvailableBoard(room);
-      return `游戏开始！\n房间：${room.name}\n当前行动：${current.name}\n\n操作说明：\n- 💎 take：取得宝石。每回合可取 3 个异色、2 个同色，或只取 1 个宝石。彩色宝石与黄金合计最多 ${MAX_PLAYER_TOKENS} 枚。\n  当前宝石池：${gemPoolText}\n  当前黄金池：${room.goldPool}\n- 🛒 buy：购买卡牌。可购买的卡牌如下：\n${boardText}\n- 🧾 reserve：预留卡牌，最多 ${MAX_RESERVED_CARDS} 张；预留后可获得 1 枚黄金（筹码未满时）。\n- 📋 reserved：查看自己预留的卡牌。\n- ⏭️ end：结束当前回合，轮到下一位玩家。\n\n可执行示例（需要带房间号）：\n- 💎 splendor.take ${room.id} red blue green\n- 💎 splendor.take ${room.id} red red\n- 💎 splendor.take ${room.id} red\n- 🛒 splendor.buy ${room.id} 1 1\n- 🧾 splendor.reserve ${room.id} 2 1\n- 📋 splendor.reserved ${room.id}\n- ⏭️ splendor.end ${room.id}\n\n指令别名：游戏状态 = splendor.status；拿 = splendor.take；购买卡牌 = splendor.buy；预留卡牌 = splendor.reserve；查看预留 = splendor.reserved；结束回合 = splendor.end。\n\n注：已在当前房间中时，也可直接省略房间号，例如：splendor.take red blue green`;
+      return `游戏开始！\n房间：${room.name}\n当前行动：${current.name}\n\n操作说明：\n- 💎 take：取得宝石。每回合可取 3 个异色、2 个同色，或只取 1 个宝石；若超过 ${MAX_PLAYER_TOKENS} 枚，需先选择弃置。\n  当前宝石池：${gemPoolText}\n  当前黄金池：${room.goldPool}\n- 🛒 buy：购买卡牌。可购买的卡牌如下：\n${boardText}\n- 🧾 reserve：预留卡牌，最多 ${MAX_RESERVED_CARDS} 张；预留后可获得 1 枚黄金。\n- 📋 reserved：查看自己预留的卡牌，并按编号购买。\n- ⏭️ end：结束当前回合，轮到下一位玩家。\n\n常用示例（已在房间内时无需房间号）：\n- 💎 splendor.take red blue green\n- 💎 splendor.take red red\n- 💎 splendor.take red\n- 🗑️ splendor.discard red gold\n- 🛒 splendor.buy 1 1\n- 🧾 splendor.reserve 2 1\n- 📋 splendor.reserved\n- 🛒 splendor.buy-reserved 1\n- ⏭️ splendor.end\n\n需要指定房间时，在命令第一个参数加房间号，例如：splendor.take ${room.id} red blue green。\n\n指令别名：游戏状态 = splendor.status；拿 = splendor.take；购买卡牌 = splendor.buy；预留卡牌 = splendor.reserve；查看预留 = splendor.reserved；结束回合 = splendor.end。`;
     });
 
   ctx.command('splendor', '璀璨宝石').subcommand('.status [roomId:text]', '查看当前游戏状态')
@@ -563,6 +605,7 @@ export function apply(ctx: Context, config: Config)
       if (!room.started) return '游戏尚未开始。';
       if (room.winner) return `${room.winner} 已经获得胜利，游戏已结束。`;
       if (room.players[room.currentTurn].id !== userId) return `当前轮到 ${room.players[room.currentTurn].name} 行动。`;
+      if (getExcessTokenCount(player)) return `请先弃置多余筹码。${formatDiscardPrompt(room, player)}`;
 
       const selected = (targetGems || '').split(/\s+/).map(color => color.trim().toLowerCase()).filter(Boolean);
       if (!selected.length) return '请指定要拿取的宝石颜色。';
@@ -576,21 +619,22 @@ export function apply(ctx: Context, config: Config)
       {
         const color = chosen[0];
         if (room.pool[color] < 1) return `${color} 宝石不足，无法取 1 个。`;
-        if (getPlayerTokenCount(player) >= MAX_PLAYER_TOKENS) return `你的宝石与黄金合计已达 ${MAX_PLAYER_TOKENS} 枚，无法再抽取。`;
+        if (getPlayerTokenCount(player) + 1 > MAX_PLAYER_TOKENS) return `抽取后会超过 ${MAX_PLAYER_TOKENS} 枚筹码上限。`;
         room.pool[color] -= 1;
         player.gems[color] += 1;
       } else if (selected.length === 2 && chosen.length === 1)
       {
         const color = chosen[0];
         if (room.pool[color] < 2) return `${color} 宝石不足，无法取 2 个同色。`;
+        if (room.pool[color] < 4) return `${color} 宝石池低于 4 个，不能拿 2 个同色。`;
         if (getPlayerTokenCount(player) + 2 > MAX_PLAYER_TOKENS) return `抽取后会超过 ${MAX_PLAYER_TOKENS} 枚筹码上限。`;
         room.pool[color] -= 2;
         player.gems[color] += 2;
-      } else if (selected.length === 3 && chosen.length === 3)
+      } else if (selected.length >= 1 && selected.length <= 3 && chosen.length === selected.length)
       {
-        if (getPlayerTokenCount(player) + 3 > MAX_PLAYER_TOKENS) return `抽取后会超过 ${MAX_PLAYER_TOKENS} 枚筹码上限。`;
         const unavailable = chosen.find(color => room.pool[color] < 1);
-        if (unavailable) return `${unavailable} 宝石不足。宝石不足时可改为只取 1 个可用颜色的宝石。`;
+        if (unavailable) return `${unavailable} 宝石不足。`;
+        if (getPlayerTokenCount(player) + selected.length > MAX_PLAYER_TOKENS) return `抽取后会超过 ${MAX_PLAYER_TOKENS} 枚筹码上限。`;
         for (const color of chosen)
         {
           room.pool[color] -= 1;
@@ -598,12 +642,69 @@ export function apply(ctx: Context, config: Config)
         }
       } else
       {
-        return '每回合可取 3 个不同颜色、2 个相同颜色，或只取 1 个颜色的宝石。';
+        return '每回合可取 1~3 个不同颜色宝石，或 2 个同色（需该颜色至少 4 个）。';
       }
 
       room.log.push(`${player.name} 抽取了 ${selected.join('、')} 宝石`);
+      if (getExcessTokenCount(player))
+      {
+        return `${player.name} 抽取成功：${selected.join('、')}。${formatDiscardPrompt(room, player)}`;
+      }
       advanceTurn(room);
       return `${player.name} 抽取成功：${selected.join('、')}。\n当前行动：${room.players[room.currentTurn].name}`;
+    });
+
+  ctx.command('splendor', '璀璨宝石').subcommand('.discard [roomId:text] [tokens:text]', '弃置多余筹码')
+    .example('splendor.discard red gold')
+    .alias('弃置宝石')
+    .action(async ({ session }, roomId, tokens) =>
+    {
+      const userId = getUserId(session);
+      let targetRoomId: string | undefined = roomId;
+      let targetTokens = tokens;
+      if (roomId && !isRoomId(roomId))
+      {
+        targetRoomId = undefined;
+        targetTokens = [roomId, tokens].filter(Boolean).join(' ');
+      }
+
+      const room = resolveRoomBySession(session, targetRoomId);
+      if (!room) return '你当前不在任何房间。';
+      const player = getPlayerByUser(room, userId);
+      if (!player) return '你不在这个房间里。';
+      if (!room.started) return '游戏尚未开始。';
+      if (room.winner) return `${room.winner} 已经获得胜利，游戏已结束。`;
+      if (room.players[room.currentTurn].id !== userId) return `当前轮到 ${room.players[room.currentTurn].name} 行动。`;
+
+      const excess = getExcessTokenCount(player);
+      if (!excess) return `你当前仅持有 ${getPlayerTokenCount(player)} 枚筹码，无需弃置。`;
+      const discarded = (targetTokens || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+      if (discarded.length !== excess) return `你需要弃置恰好 ${excess} 枚筹码。${formatDiscardPrompt(room, player)}`;
+      const invalid = discarded.find(color => !isTokenColor(color));
+      if (invalid) return `筹码颜色 ${invalid} 不合法，可选：${GEM_COLORS.join('、')}、gold。`;
+
+      const counts = new Map<TokenColor, number>();
+      for (const color of discarded as TokenColor[]) counts.set(color, (counts.get(color) || 0) + 1);
+      for (const [color, count] of counts)
+      {
+        const owned = color === 'gold' ? player.gold : player.gems[color];
+        if (owned < count) return `你的 ${color} 筹码只有 ${owned} 枚，无法弃置 ${count} 枚。`;
+      }
+      for (const [color, count] of counts)
+      {
+        if (color === 'gold')
+        {
+          player.gold -= count;
+          room.goldPool += count;
+        } else
+        {
+          player.gems[color] -= count;
+          room.pool[color] += count;
+        }
+      }
+      room.log.push(`${player.name} 弃置了 ${discarded.join('、')} 筹码`);
+      advanceTurn(room);
+      return `${player.name} 已弃置：${discarded.join('、')}。\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
   ctx.command('splendor', '璀璨宝石').subcommand('.buy [roomId:text] [level:text] [slot:text]', '购买卡牌')
@@ -622,6 +723,7 @@ export function apply(ctx: Context, config: Config)
       if (!room.started) return '游戏尚未开始。';
       if (room.winner) return `${room.winner} 已经获得胜利，游戏已结束。`;
       if (room.players[room.currentTurn].id !== userId) return `当前轮到 ${room.players[room.currentTurn].name} 行动。`;
+      if (getExcessTokenCount(player)) return `请先弃置多余筹码。${formatDiscardPrompt(room, player)}`;
 
       const cardLevel = Number(targetLevel) as CardLevel;
       const slotIndex = Number(targetSlot);
@@ -647,18 +749,18 @@ export function apply(ctx: Context, config: Config)
       player.cards.push(card);
       player.bonuses[card.color] += 1;
       player.prestige += card.prestige;
-      room.board[cardLevel].splice(slotIndex - 1, 1);
-      fillBoard(room, cardLevel);
+      replaceBoardCard(room, cardLevel, slotIndex - 1);
+      const replacement = room.board[cardLevel][slotIndex - 1];
       checkNobles(room, player);
       room.log.push(`${player.name} 购买了 ${card.title}`);
 
       if (checkWinner(room))
       {
-        return `${player.name} 成功购买 ${card.title}，并达到胜利条件！\n总声望：${player.prestige}`;
+        return `${player.name} 成功购买 ${card.title}，并达到胜利条件！\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n总声望：${player.prestige}`;
       }
 
       advanceTurn(room);
-      return `${player.name} 成功购买 ${card.title}。\n当前行动：${room.players[room.currentTurn].name}`;
+      return `${player.name} 成功购买 ${card.title}。\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
   ctx.command('splendor', '璀璨宝石').subcommand('.reserve [roomId:text] [level:text] [slot:text]', '预留卡牌')
@@ -677,6 +779,7 @@ export function apply(ctx: Context, config: Config)
       if (!room.started) return '游戏尚未开始。';
       if (room.winner) return `${room.winner} 已经获得胜利，游戏已结束。`;
       if (room.players[room.currentTurn].id !== userId) return `当前轮到 ${room.players[room.currentTurn].name} 行动。`;
+      if (getExcessTokenCount(player)) return `请先弃置多余筹码。${formatDiscardPrompt(room, player)}`;
       if (player.reserved.length >= MAX_RESERVED_CARDS) return `你最多只能预留 ${MAX_RESERVED_CARDS} 张卡牌。`;
 
       const cardLevel = Number(targetLevel) as CardLevel;
@@ -691,7 +794,8 @@ export function apply(ctx: Context, config: Config)
       if (!card) return '该卡牌不存在。';
 
       player.reserved.push(card);
-      room.board[cardLevel].splice(slotIndex - 1, 1);
+      replaceBoardCard(room, cardLevel, slotIndex - 1);
+      const replacement = room.board[cardLevel][slotIndex - 1];
       let receivedGold = false;
       if (room.goldPool > 0 && getPlayerTokenCount(player) < MAX_PLAYER_TOKENS)
       {
@@ -699,10 +803,9 @@ export function apply(ctx: Context, config: Config)
         room.goldPool -= 1;
         receivedGold = true;
       }
-      fillBoard(room, cardLevel);
       room.log.push(`${player.name} 预留了 ${card.title}${receivedGold ? '，获得 1 枚黄金' : room.goldPool <= 0 ? '，黄金池已空' : `，持有筹码已达 ${MAX_PLAYER_TOKENS} 枚`}`);
       advanceTurn(room);
-      return `${player.name} 预留成功：${card.title}。${receivedGold ? '获得 1 枚黄金。' : room.goldPool <= 0 ? '黄金池已空，未获得黄金。' : `持有筹码已达 ${MAX_PLAYER_TOKENS} 枚，未获得黄金。`}\n黄金池剩余：${room.goldPool}\n当前行动：${room.players[room.currentTurn].name}`;
+      return `${player.name} 预留成功：${card.title}。${receivedGold ? '获得 1 枚黄金。' : room.goldPool <= 0 ? '黄金池已空，未获得黄金。' : `持有筹码已达 ${MAX_PLAYER_TOKENS} 枚，未获得黄金。`}\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n黄金池剩余：${room.goldPool}\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
   ctx.command('splendor', '璀璨宝石').subcommand('.reserved [roomId:text]', '查看自己预留的卡牌')
@@ -718,7 +821,50 @@ export function apply(ctx: Context, config: Config)
       if (!player) return '你不在这个房间里。';
       if (!room.started) return '游戏尚未开始。';
 
-      return `${player.name} 的预留卡牌（${player.reserved.length}/${MAX_RESERVED_CARDS}）：\n${formatReservedCards(player.reserved)}`;
+      const purchaseHint = player.reserved.length
+        ? `\n\n当前可购买预留卡。请输入：splendor.buy-reserved <编号>，例如 splendor.buy-reserved 1。`
+        : '';
+      return `${player.name} 的预留卡牌（${player.reserved.length}/${MAX_RESERVED_CARDS}）：\n${formatReservedCards(player.reserved)}${purchaseHint}`;
+    });
+
+  ctx.command('splendor', '璀璨宝石').subcommand('.buy-reserved [roomId:text] [slot:text]', '购买预留卡牌')
+    .example('splendor.buy-reserved 1')
+    .alias('购买预留卡')
+    .action(async ({ session }, roomId, slot) =>
+    {
+      const userId = getUserId(session);
+      const targetRoomId = roomId && isRoomId(roomId) ? roomId : undefined;
+      const targetSlot = targetRoomId ? slot : roomId;
+      const room = resolveRoomBySession(session, targetRoomId);
+      if (!room) return '你当前不在任何房间。';
+      const player = getPlayerByUser(room, userId);
+      if (!player) return '你不在这个房间里。';
+      if (!room.started) return '游戏尚未开始。';
+      if (room.winner) return `${room.winner} 已经获得胜利，游戏已结束。`;
+      if (room.players[room.currentTurn].id !== userId) return `当前轮到 ${room.players[room.currentTurn].name} 行动。`;
+      if (getExcessTokenCount(player)) return `请先弃置多余筹码。${formatDiscardPrompt(room, player)}`;
+
+      const slotIndex = Number(targetSlot);
+      if (!Number.isInteger(slotIndex) || slotIndex < 1 || slotIndex > player.reserved.length)
+      {
+        return `没有编号为 ${targetSlot} 的预留卡牌。请先使用 splendor.reserved 查看可购买卡牌。`;
+      }
+      const card = player.reserved[slotIndex - 1];
+      if (!canAfford(player, card.cost)) return `你无法支付 ${card.title} 的成本：${formatCost(card.cost)}。`;
+
+      const payment = payCost(player, card.cost);
+      for (const color of GEM_COLORS) room.pool[color] += payment.gems[color];
+      room.goldPool += payment.gold;
+      player.reserved.splice(slotIndex - 1, 1);
+      player.cards.push(card);
+      player.bonuses[card.color] += 1;
+      player.prestige += card.prestige;
+      checkNobles(room, player);
+      room.log.push(`${player.name} 购买了预留卡 ${card.title}`);
+
+      if (checkWinner(room)) return `${player.name} 成功购买预留卡 ${card.title}，并达到胜利条件！\n总声望：${player.prestige}`;
+      advanceTurn(room);
+      return `${player.name} 成功购买预留卡 ${card.title}。\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
   ctx.command('splendor', '璀璨宝石').subcommand('.end [roomId:text]', '结束当前回合')
@@ -735,6 +881,7 @@ export function apply(ctx: Context, config: Config)
       if (!room.started) return '游戏尚未开始。';
       if (room.winner) return `${room.winner} 已经获得胜利，游戏已结束。`;
       if (room.players[room.currentTurn].id !== userId) return `当前轮到 ${room.players[room.currentTurn].name} 行动。`;
+      if (getExcessTokenCount(player)) return `请先弃置多余筹码。${formatDiscardPrompt(room, player)}`;
 
       room.log.push(`${player.name} 结束回合`);
       advanceTurn(room);
@@ -800,7 +947,7 @@ export function apply(ctx: Context, config: Config)
     .example('splendor.rules')
     .action(() =>
     {
-      return `璀璨宝石游戏规则：\n\n1. 游戏目标\n率先获得至少 15 点声望即可获胜。\n\n2. 回合行动\n每次行动后将自动轮到下一位玩家；也可使用 splendor.end 放弃本回合。\n- 抽取宝石：使用 splendor.take，可拿 3 枚不同颜色、2 枚相同颜色，或 1 枚宝石。宝石不足时可只取 1 枚。\n- 筹码上限：每位玩家持有的彩色宝石与黄金合计最多 ${MAX_PLAYER_TOKENS} 枚。\n- 购买卡牌：使用 splendor.buy <层级> <位置>。支付卡牌成本后获得卡牌颜色对应的永久折扣和声望。黄金可代替任意颜色宝石支付。\n- 预留卡牌：使用 splendor.reserve <层级> <位置>。每人最多预留 ${MAX_RESERVED_CARDS} 张；黄金池尚有黄金且筹码未满时，预留可获得 1 枚黄金。\n- 查看预留：使用 splendor.reserved，查看自己已预留的卡牌。\n\n3. 贵族牌\n当你拥有的已购卡牌颜色数量满足贵族牌条件时，会自动获得该贵族牌及其声望。\n\n4. 指令示例\n- splendor.take red blue green\n- splendor.take red red\n- splendor.take red\n- splendor.buy 1 2\n- splendor.reserve 2 1\n- splendor.reserved\n- splendor.status\n指令别名：游戏状态 = splendor.status；拿 = splendor.take；购买卡牌 = splendor.buy；预留卡牌 = splendor.reserve；查看预留 = splendor.reserved；结束回合 = splendor.end。\n\n5. 结束游戏\n玩家可用 splendor.vote-end 发起结束投票；超过半数同意后游戏结束。房主可使用 splendor.kill 直接强制结束游戏。`;
+      return `璀璨宝石游戏规则：\n\n1. 游戏目标\n率先获得至少 15 点声望即可获胜。\n\n2. 回合行动\n每次行动后将自动轮到下一位玩家；也可使用 splendor.end 放弃本回合。\n- 抽取宝石：使用 splendor.take，可拿 3 枚不同颜色、2 枚相同颜色，或 1 枚宝石。若拿取后超过 ${MAX_PLAYER_TOKENS} 枚，须用 splendor.discard 弃置多余筹码后才能继续行动。\n- 购买卡牌：使用 splendor.buy <层级> <位置>。支付成本后，卡牌会提供其颜色的 1 点永久折扣；之后购买时，该颜色成本会自动减 1。部分卡牌还提供声望。黄金可代替任意颜色宝石支付。\n- 预留卡牌：使用 splendor.reserve <层级> <位置>。每人最多预留 ${MAX_RESERVED_CARDS} 张；黄金池尚有黄金且筹码未满时，预留可获得 1 枚黄金。使用 splendor.reserved 查看预留卡，再用 splendor.buy-reserved <编号> 购买。\n\n3. 贵族牌\n贵族牌会显示所需的已购卡牌颜色数量，例如“🔴red:3、🔵blue:3”表示需拥有 3 张红色卡牌与 3 张蓝色卡牌。每次购买卡牌后，系统会自动检查条件；满足条件即自动获得该贵族牌及其声望，无需额外消耗宝石或使用指令。\n\n4. 指令示例\n- splendor.take red blue green\n- splendor.discard red gold\n- splendor.buy 1 2\n- splendor.reserve 2 1\n- splendor.reserved\n- splendor.buy-reserved 1\n- splendor.status\n指令别名：游戏状态 = splendor.status；拿 = splendor.take；购买卡牌 = splendor.buy；预留卡牌 = splendor.reserve；查看预留 = splendor.reserved；结束回合 = splendor.end。\n\n5. 结束游戏\n玩家可用 splendor.vote-end 发起结束投票；超过半数同意后游戏结束。房主可使用 splendor.kill 直接强制结束游戏。`;
     });
 
   ctx.command('splendor', '璀璨宝石').subcommand('.help', '查看帮助')
