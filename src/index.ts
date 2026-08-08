@@ -159,7 +159,7 @@ export function apply(ctx: Context, config: Config)
   function describeBoardSlot(level: CardLevel, slotIndex: number, card?: Card): string
   {
     if (!card) return `第${level}层第${slotIndex + 1}位：空`;
-    return `第${level}层第${slotIndex + 1}位：${card.title} (${GEM_EMOJIS[card.color]}${card.color}) 需:${formatCompactCost(card.cost)} 声望:${card.prestige}`;
+    return `第${level}层第${slotIndex + 1}位：${card.title} (${CARD_COLOR_SQUARES[card.color]}${card.color}) 需:${formatCompactCost(card.cost)} 声望:${card.prestige}`;
   }
 
   function getRoomByUser(rooms: Map<string, RoomState>, userId: string): RoomState | undefined
@@ -191,6 +191,14 @@ export function apply(ctx: Context, config: Config)
     white: '⚪️',
   };
 
+  const CARD_COLOR_SQUARES: Record<GemColor, string> = {
+    red: '🟥',
+    blue: '🟦',
+    green: '🟩',
+    black: '⬛',
+    white: '⬜',
+  };
+
   function formatGemColor(color: GemColor): string
   {
     return `${GEM_EMOJIS[color]}${color}`;
@@ -199,6 +207,18 @@ export function apply(ctx: Context, config: Config)
   function formatGemSummary(gems: GemBag): string
   {
     return GEM_COLORS.map(color => `${formatGemColor(color)}:${gems[color]}`).join(' / ');
+  }
+
+  function formatPlayerGems(gems: GemBag): string
+  {
+    return `【${GEM_COLORS.map(color => `${GEM_EMOJIS[color]}${gems[color]}`).join('，')}】`;
+  }
+
+  function formatPlayerCards(cards: Card[]): string
+  {
+    const counts = createEmptyGemBag();
+    for (const card of cards) counts[card.color] += 1;
+    return `【${GEM_COLORS.map(color => `${CARD_COLOR_SQUARES[color]}${counts[color]}`).join('，')}】`;
   }
 
   function formatMemberList(room: RoomState): string
@@ -216,6 +236,16 @@ export function apply(ctx: Context, config: Config)
     return entries.length ? entries.join(', ') : '无';
   }
 
+  function formatNobleRequirement(requirement: Partial<GemBag>): string
+  {
+    const entries = GEM_COLORS.map(color =>
+    {
+      const count = requirement[color] ?? 0;
+      return count > 0 ? `${CARD_COLOR_SQUARES[color]}${count}` : null;
+    }).filter(Boolean) as string[];
+    return entries.length ? entries.join(' ') : '无';
+  }
+
   function formatCompactCost(cost: Partial<GemBag>): string
   {
     const entries = GEM_COLORS.map(color =>
@@ -230,7 +260,7 @@ export function apply(ctx: Context, config: Config)
   {
     if (!cards.length) return `第${level}层：暂无卡牌`;
     return cards.map((card, index) => card
-      ? `${index + 1}. ${GEM_EMOJIS[card.color]} ${card.title} | ⭐${card.prestige} | ${formatCompactCost(card.cost)}`
+      ? `${index + 1}. ${CARD_COLOR_SQUARES[card.color]} ${card.title} | ⭐${card.prestige} | ${formatCompactCost(card.cost)}`
       : `${index + 1}. （已无卡牌）`,
     ).join('\n');
   }
@@ -244,12 +274,12 @@ export function apply(ctx: Context, config: Config)
   function formatNobleCards(nobles: Noble[]): string
   {
     if (!nobles.length) return '暂无贵族牌';
-    return nobles.map((noble, index) => `${index + 1}. 👑 ${noble.title} 声望:${noble.prestige} 条件:${formatCost(noble.requirement)}`).join('\n');
+    return nobles.map((noble, index) => `${index + 1}. 👑 ${noble.title} 声望:${noble.prestige} 条件:${formatNobleRequirement(noble.requirement)}`).join('\n');
   }
 
   function formatPlayerSummary(player: PlayerState): string
   {
-    return `${player.name}：宝石 ${formatGemSummary(player.gems)} / 黄金 ${player.gold} / 持有筹码 ${getPlayerTokenCount(player)}/${MAX_PLAYER_TOKENS} / 卡牌资源 ${formatGemSummary(player.bonuses)} / 声望 ${player.prestige} / 已购 ${player.cards.length} / 预留 ${player.reserved.length}/${MAX_RESERVED_CARDS}`;
+    return `${player.name}：宝石:${formatPlayerGems(player.gems)}，黄金:${player.gold}，持有筹码:${getPlayerTokenCount(player)}/${MAX_PLAYER_TOKENS}，卡牌:${formatPlayerCards(player.cards)}，卡牌资源:${formatPlayerGems(player.bonuses)}，声望:⭐${player.prestige}，已购:${player.cards.length}，预留:${player.reserved.length}/${MAX_RESERVED_CARDS}`;
   }
 
   function getPlayerTokenCount(player: PlayerState): number
@@ -266,7 +296,7 @@ export function apply(ctx: Context, config: Config)
   {
     const excess = getExcessTokenCount(player);
     if (!excess) return '';
-    return `\n你当前持有 ${getPlayerTokenCount(player)} 枚筹码，需弃置 ${excess} 枚后才能继续行动。请输入：splendor.discard ${room.id} <颜色…>（可选 red、blue、green、black、white、gold）。`;
+    return `\n你当前持有 ${getPlayerTokenCount(player)} 枚筹码，需弃置 ${excess} 枚后才能继续行动。请输入：ccbc.discard ${room.id} <颜色…>（可选 red、blue、green、black、white、gold）。`;
   }
 
   function canAfford(player: PlayerState, cost: Partial<GemBag>): boolean
@@ -434,10 +464,11 @@ export function apply(ctx: Context, config: Config)
     room.log.push(`游戏开始，当前行动：${room.players[0].name}`);
   }
 
-  ctx.command('splendor', '璀璨宝石');
+  ctx.command('ccbc', '璀璨宝石');
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.create [roomName:text]', '创建房间')
-    .example('splendor.create 玫瑰王座')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.create [roomName:text]', '创建房间')
+    .example('ccbc.create 玫瑰王座')
+    .alias('创建房间')
     .action(async ({ session }, roomName) =>
     {
       const userId = getUserId(session);
@@ -474,11 +505,12 @@ export function apply(ctx: Context, config: Config)
       };
 
       rooms.set(room.id, room);
-      return `房间创建成功！\n房间名：${room.name}\n房间号：${room.id}\n房主：${userName}\n加入方式：splendor.join ${room.id}`;
+      return `房间创建成功！\n房间名：${room.name}\n房间号：${room.id}\n房主：${userName}\n加入方式：ccbc.join ${room.id}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.join <roomId:text>', '加入房间')
-    .example('splendor.join SPL-ABCD12')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.join <roomId:text>', '加入房间')
+    .example('ccbc.join SPL-ABCD12')
+    .alias('加入房间')
     .action(async ({ session }, roomId) =>
     {
       const userId = getUserId(session);
@@ -521,8 +553,9 @@ export function apply(ctx: Context, config: Config)
       return `${userName} 已加入房间 ${room.id}。\n当前成员：\n${formatMemberList(room)}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.room [roomId:text]', '查看房间成员')
-    .example('splendor.room')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.room [roomId:text]', '查看房间成员')
+    .example('ccbc.room')
+    .alias('查看房间')
     .action(async ({ session }, roomId) =>
     {
       const userId = getUserId(session);
@@ -535,8 +568,9 @@ export function apply(ctx: Context, config: Config)
       return `房间名：${room.name}\n房间号：${room.id}\n房主：${host}\n状态：${room.started ? '已开始' : '等待中'}\n成员列表：\n${formatMemberList(room)}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.start [roomId:text]', '房主开始游戏')
-    .example('splendor.start')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.start [roomId:text]', '房主开始游戏')
+    .example('ccbc.start')
+    .alias('开始游戏')
     .action(async ({ session }, roomId) =>
     {
       const userId = getUserId(session);
@@ -553,11 +587,11 @@ export function apply(ctx: Context, config: Config)
       const current = room.players[room.currentTurn];
       const gemPoolText = formatGemSummary(room.pool);
       const boardText = describeAvailableBoard(room);
-      return `游戏开始！\n房间：${room.name}\n当前行动：${current.name}\n\n操作说明：\n- 💎 take：取得宝石。每回合可取 3 个异色、2 个同色，或只取 1 个宝石；若超过 ${MAX_PLAYER_TOKENS} 枚，需先选择弃置。\n  当前宝石池：${gemPoolText}\n  当前黄金池：${room.goldPool}\n- 🛒 buy：购买卡牌。可购买的卡牌如下：\n${boardText}\n- 🧾 reserve：预留卡牌，最多 ${MAX_RESERVED_CARDS} 张；预留后可获得 1 枚黄金。\n- 📋 reserved：查看自己预留的卡牌，并按编号购买。\n- ⏭️ end：结束当前回合，轮到下一位玩家。\n\n常用示例（已在房间内时无需房间号）：\n- 💎 splendor.take red blue green\n- 💎 splendor.take red red\n- 💎 splendor.take red\n- 🗑️ splendor.discard red gold\n- 🛒 splendor.buy 1 1\n- 🧾 splendor.reserve 2 1\n- 📋 splendor.reserved\n- 🛒 splendor.buy-reserved 1\n- ⏭️ splendor.end\n\n需要指定房间时，在命令第一个参数加房间号，例如：splendor.take ${room.id} red blue green。\n\n指令别名：游戏状态 = splendor.status；拿 = splendor.take；购买卡牌 = splendor.buy；预留卡牌 = splendor.reserve；查看预留 = splendor.reserved；结束回合 = splendor.end。`;
+      return `游戏开始！\n房间：${room.name}\n当前行动：${current.name}\n\n操作说明：\n- 💎 take：取得宝石。每回合可取 3 个异色、2 个同色，或只取 1 个宝石；若超过 ${MAX_PLAYER_TOKENS} 枚，需先选择弃置。\n  当前宝石池：${gemPoolText}\n  当前黄金池：${room.goldPool}\n- 🛒 buy：购买卡牌。可购买的卡牌如下：\n${boardText}\n- 🧾 reserve：预留卡牌，最多 ${MAX_RESERVED_CARDS} 张；预留后可获得 1 枚黄金。\n- 📋 reserved：查看自己预留的卡牌，并按编号购买。\n- ⏭️ end：结束当前回合，轮到下一位玩家。\n\n常用示例（已在房间内时无需房间号）：\n- 💎 ccbc.take red blue green\n- 💎 ccbc.take red red\n- 💎 ccbc.take red\n- 🗑️ ccbc.discard red gold\n- 🛒 ccbc.buy 1 1\n- 🧾 ccbc.reserve 2 1\n- 📋 ccbc.reserved\n- 🛒 ccbc.buy-reserved 1\n- ⏭️ ccbc.end\n\n需要指定房间时，在命令第一个参数加房间号，例如：ccbc.take ${room.id} red blue green。\n\n指令别名：游戏状态 = ccbc.status；拿 = ccbc.take；购买卡牌 = ccbc.buy；预留卡牌 = ccbc.reserve；查看预留 = ccbc.reserved；结束回合 = ccbc.end。`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.status [roomId:text]', '查看当前游戏状态')
-    .example('splendor.status')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.status [roomId:text]', '查看当前游戏状态')
+    .example('ccbc.status')
     .alias('游戏状态')
     .action(async ({ session }, roomId) =>
     {
@@ -579,8 +613,8 @@ export function apply(ctx: Context, config: Config)
       return `房间：${room.name}\n轮数：${room.round}\n当前行动：${room.players[room.currentTurn].name}\n宝石池：${formatGemSummary(room.pool)} / 黄金池：${room.goldPool}\n\n玩家：\n${summaries}\n\n牌桌：\n${boardText}\n\n贵族牌：\n${nobleText}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.take [roomId:text] [gems:text]', '抽取宝石')
-    .example('splendor.take SPL-ABCD12 red blue')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.take [roomId:text] [gems:text]', '抽取宝石')
+    .example('ccbc.take SPL-ABCD12 red blue')
     .alias('拿')
     .action(async ({ session }, roomId, gems) =>
     {
@@ -648,14 +682,14 @@ export function apply(ctx: Context, config: Config)
       room.log.push(`${player.name} 抽取了 ${selected.join('、')} 宝石`);
       if (getExcessTokenCount(player))
       {
-        return `${player.name} 抽取成功：${selected.join('、')}。${formatDiscardPrompt(room, player)}`;
+        return `${player.name} 抽取成功：${selected.join('、')}。\n当前宝石池：${formatGemSummary(room.pool)}${formatDiscardPrompt(room, player)}`;
       }
       advanceTurn(room);
-      return `${player.name} 抽取成功：${selected.join('、')}。\n当前行动：${room.players[room.currentTurn].name}`;
+      return `${player.name} 抽取成功：${selected.join('、')}。\n当前宝石池：${formatGemSummary(room.pool)}\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.discard [roomId:text] [tokens:text]', '弃置多余筹码')
-    .example('splendor.discard red gold')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.discard [roomId:text] [tokens:text]', '弃置多余筹码')
+    .example('ccbc.discard red gold')
     .alias('弃置宝石')
     .action(async ({ session }, roomId, tokens) =>
     {
@@ -707,8 +741,8 @@ export function apply(ctx: Context, config: Config)
       return `${player.name} 已弃置：${discarded.join('、')}。\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.buy [roomId:text] [level:text] [slot:text]', '购买卡牌')
-    .example('splendor.buy SPL-ABCD12 1 2')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.buy [roomId:text] [level:text] [slot:text]', '购买卡牌')
+    .example('ccbc.buy SPL-ABCD12 1 2')
     .alias('购买卡牌')
     .action(async ({ session }, roomId, level, slot) =>
     {
@@ -756,15 +790,15 @@ export function apply(ctx: Context, config: Config)
 
       if (checkWinner(room))
       {
-        return `${player.name} 成功购买 ${card.title}，并达到胜利条件！\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n总声望：${player.prestige}`;
+        return `${player.name} 成功购买 ${card.title}，并达到胜利条件！\n当前宝石池：${formatGemSummary(room.pool)}\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n总声望：${player.prestige}`;
       }
 
       advanceTurn(room);
-      return `${player.name} 成功购买 ${card.title}。\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n当前行动：${room.players[room.currentTurn].name}`;
+      return `${player.name} 成功购买 ${card.title}。\n当前宝石池：${formatGemSummary(room.pool)}\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.reserve [roomId:text] [level:text] [slot:text]', '预留卡牌')
-    .example('splendor.reserve SPL-ABCD12 2 1')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.reserve [roomId:text] [level:text] [slot:text]', '预留卡牌')
+    .example('ccbc.reserve SPL-ABCD12 2 1')
     .alias('预留卡牌')
     .action(async ({ session }, roomId, level, slot) =>
     {
@@ -808,8 +842,8 @@ export function apply(ctx: Context, config: Config)
       return `${player.name} 预留成功：${card.title}。${receivedGold ? '获得 1 枚黄金。' : room.goldPool <= 0 ? '黄金池已空，未获得黄金。' : `持有筹码已达 ${MAX_PLAYER_TOKENS} 枚，未获得黄金。`}\n补位：${describeBoardSlot(cardLevel, slotIndex - 1, replacement)}\n黄金池剩余：${room.goldPool}\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.reserved [roomId:text]', '查看自己预留的卡牌')
-    .example('splendor.reserved SPL-ABCD12')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.reserved [roomId:text]', '查看自己预留的卡牌')
+    .example('ccbc.reserved SPL-ABCD12')
     .alias('查看预留')
     .action(async ({ session }, roomId) =>
     {
@@ -822,13 +856,13 @@ export function apply(ctx: Context, config: Config)
       if (!room.started) return '游戏尚未开始。';
 
       const purchaseHint = player.reserved.length
-        ? `\n\n当前可购买预留卡。请输入：splendor.buy-reserved <编号>，例如 splendor.buy-reserved 1。`
+        ? `\n\n当前可购买预留卡。请输入：ccbc.buy-reserved <编号>，例如 ccbc.buy-reserved 1。`
         : '';
       return `${player.name} 的预留卡牌（${player.reserved.length}/${MAX_RESERVED_CARDS}）：\n${formatReservedCards(player.reserved)}${purchaseHint}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.buy-reserved [roomId:text] [slot:text]', '购买预留卡牌')
-    .example('splendor.buy-reserved 1')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.buy-reserved [roomId:text] [slot:text]', '购买预留卡牌')
+    .example('ccbc.buy-reserved 1')
     .alias('购买预留卡')
     .action(async ({ session }, roomId, slot) =>
     {
@@ -847,7 +881,7 @@ export function apply(ctx: Context, config: Config)
       const slotIndex = Number(targetSlot);
       if (!Number.isInteger(slotIndex) || slotIndex < 1 || slotIndex > player.reserved.length)
       {
-        return `没有编号为 ${targetSlot} 的预留卡牌。请先使用 splendor.reserved 查看可购买卡牌。`;
+        return `没有编号为 ${targetSlot} 的预留卡牌。请先使用 ccbc.reserved 查看可购买卡牌。`;
       }
       const card = player.reserved[slotIndex - 1];
       if (!canAfford(player, card.cost)) return `你无法支付 ${card.title} 的成本：${formatCost(card.cost)}。`;
@@ -862,13 +896,13 @@ export function apply(ctx: Context, config: Config)
       checkNobles(room, player);
       room.log.push(`${player.name} 购买了预留卡 ${card.title}`);
 
-      if (checkWinner(room)) return `${player.name} 成功购买预留卡 ${card.title}，并达到胜利条件！\n总声望：${player.prestige}`;
+      if (checkWinner(room)) return `${player.name} 成功购买预留卡 ${card.title}，并达到胜利条件！\n当前宝石池：${formatGemSummary(room.pool)}\n总声望：${player.prestige}`;
       advanceTurn(room);
-      return `${player.name} 成功购买预留卡 ${card.title}。\n当前行动：${room.players[room.currentTurn].name}`;
+      return `${player.name} 成功购买预留卡 ${card.title}。\n当前宝石池：${formatGemSummary(room.pool)}\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.end [roomId:text]', '结束当前回合')
-    .example('splendor.end SPL-ABCD12')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.end [roomId:text]', '结束当前回合')
+    .example('ccbc.end SPL-ABCD12')
     .alias('结束回合')
     .action(async ({ session }, roomId) =>
     {
@@ -888,8 +922,8 @@ export function apply(ctx: Context, config: Config)
       return `${player.name} 已结束回合。\n当前行动：${room.players[room.currentTurn].name}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.kill [roomId:text]', '房主强制结束游戏')
-    .example('splendor.kill SPL-ABCD12')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.kill [roomId:text]', '房主强制结束游戏')
+    .example('ccbc.kill SPL-ABCD12')
     .alias('强制结束璀璨宝石')
     .action(async ({ session }, roomId) =>
     {
@@ -907,8 +941,9 @@ export function apply(ctx: Context, config: Config)
       return `房主已强制结束房间 ${room.name} 的游戏。\n最终排名：\n${ranking}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.vote-end [roomId:text]', '投票结束当前游戏')
-    .example('splendor.vote-end SPL-ABCD12')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.vote-end [roomId:text]', '投票结束当前游戏')
+    .example('ccbc.vote-end SPL-ABCD12')
+    .alias('投票结束游戏')
     .action(async ({ session }, roomId) =>
     {
       const userId = getUserId(session);
@@ -943,14 +978,15 @@ export function apply(ctx: Context, config: Config)
       return `结束游戏投票已通过，房间 ${room.name} 的游戏已结束。\n最终排名：\n${ranking}`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.rules', '查看游戏规则')
-    .example('splendor.rules')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.rules', '璀璨宝石规则')
+    .example('ccbc.rules')
+    .alias('游戏规则')
     .action(() =>
     {
-      return `璀璨宝石游戏规则：\n\n1. 游戏目标\n率先获得至少 15 点声望即可获胜。\n\n2. 回合行动\n每次行动后将自动轮到下一位玩家；也可使用 splendor.end 放弃本回合。\n- 抽取宝石：使用 splendor.take，可拿 3 枚不同颜色、2 枚相同颜色，或 1 枚宝石。若拿取后超过 ${MAX_PLAYER_TOKENS} 枚，须用 splendor.discard 弃置多余筹码后才能继续行动。\n- 购买卡牌：使用 splendor.buy <层级> <位置>。支付成本后，卡牌会提供其颜色的 1 点永久折扣；之后购买时，该颜色成本会自动减 1。部分卡牌还提供声望。黄金可代替任意颜色宝石支付。\n- 预留卡牌：使用 splendor.reserve <层级> <位置>。每人最多预留 ${MAX_RESERVED_CARDS} 张；黄金池尚有黄金且筹码未满时，预留可获得 1 枚黄金。使用 splendor.reserved 查看预留卡，再用 splendor.buy-reserved <编号> 购买。\n\n3. 贵族牌\n贵族牌会显示所需的已购卡牌颜色数量，例如“🔴red:3、🔵blue:3”表示需拥有 3 张红色卡牌与 3 张蓝色卡牌。每次购买卡牌后，系统会自动检查条件；满足条件即自动获得该贵族牌及其声望，无需额外消耗宝石或使用指令。\n\n4. 指令示例\n- splendor.take red blue green\n- splendor.discard red gold\n- splendor.buy 1 2\n- splendor.reserve 2 1\n- splendor.reserved\n- splendor.buy-reserved 1\n- splendor.status\n指令别名：游戏状态 = splendor.status；拿 = splendor.take；购买卡牌 = splendor.buy；预留卡牌 = splendor.reserve；查看预留 = splendor.reserved；结束回合 = splendor.end。\n\n5. 结束游戏\n玩家可用 splendor.vote-end 发起结束投票；超过半数同意后游戏结束。房主可使用 splendor.kill 直接强制结束游戏。`;
+      return `璀璨宝石：新手规则\n\n一句话目标：收集宝石，购买卡牌，获得声望。先达到 15 点声望的人获胜。\n\n【你的一回合】\n轮到你时，只做下面一件事：\n1. 拿宝石\n2. 买一张牌\n3. 预留一张牌\n做完后系统会自动轮到下一位玩家。暂时不想做事，也可以输入 ccbc.end。\n\n【第一回合建议】\n先输入 ccbc.status 看牌桌，然后选择一张买得起的牌：\n- 想攒宝石：ccbc.take red blue green\n- 想买第 1 层第 2 张牌：ccbc.buy 1 2\n不用记住全部规则，照着牌桌上的成本收集对应颜色即可。\n\n【三种行动】\n拿宝石：\n- 一次拿 1 枚：ccbc.take red\n- 一次拿 3 枚不同颜色：ccbc.take red blue green\n- 一次拿 2 枚相同颜色：ccbc.take red red（红色宝石池至少要有 4 枚）\n每人最多持有 ${MAX_PLAYER_TOKENS} 枚筹码。拿完超过上限时，先弃掉多余的筹码，例如：ccbc.discard red gold。\n\n【如何看懂卡牌】\n牌桌上的卡牌格式是：编号. 颜色 名称 | ⭐声望 | 宝石成本。\n例如：1. 🟥红色卡 | ⭐1 | 🔵2 🔴1，意思是：它是红色卡牌，买下后获得 1 点声望，需要 2 枚蓝宝石和 1 枚红宝石。\n- 卡牌分为第 1、2、3 层：层数越高，通常越贵，但声望也更多。\n- 不需要按层购买，能支付哪张就可以买哪张；购买时使用“层级 + 位置”，例如 ccbc.buy 1 2。\n- 卡牌颜色很重要：买下一张红色卡牌，就永久获得 1 个红色折扣。以后买牌时，红色成本自动少 1。\n- 这些折扣会一直保留，不会因为支付宝石而消失；已买的卡牌也不会被拿走。\n- 成本中的数字表示需要几枚对应颜色宝石；有折扣时，先用折扣抵扣，不够的部分再用手里的宝石支付。\n\n买卡牌：\nccbc.buy <层级> <位置>，例如 ccbc.buy 1 2。\n支付牌上写的宝石后，你会得到三样东西：\n- 卡牌上的声望：⭐越多越好\n- 卡牌颜色的永久折扣：以后买牌时，该颜色少付 1 枚\n- 卡牌本身：以后可以继续帮你获得折扣和声望\n黄金可以代替任意颜色的宝石。\n\n预留卡牌：\nccbc.reserve <层级> <位置> 可以把一张牌留给自己，之后再买；每人最多预留 ${MAX_RESERVED_CARDS} 张。黄金池有黄金且你的筹码未满时，预留还会拿到 1 枚黄金。\n查看预留：ccbc.reserved\n购买预留牌：ccbc.buy-reserved <编号>\n\n【贵族牌】\n买牌后系统会自动检查贵族条件。\n例如贵族条件是 🔴3 🔵3，就是你要拥有 3 张红色卡牌和 3 张蓝色卡牌。满足条件后自动获得贵族和 3 点声望，不需要输入指令。\n\n【你真正需要记住的】\n1. 看牌的成本，拿对应颜色的宝石。\n2. 每回合只做一件事：拿宝石、买牌或预留牌。\n3. 买到的牌会提供永久折扣，声望达到 15 点就赢。\n\n常用指令：\nccbc.status       查看牌桌和所有玩家\nccbc.take red     拿宝石\nccbc.buy 1 2      买第 1 层第 2 张牌\nccbc.reserve 2 1  预留第 2 层第 1 张牌\nccbc.reserved     查看自己的预留牌\nccbc.end           结束本回合`;
     });
 
-  ctx.command('splendor', '璀璨宝石').subcommand('.help', '查看帮助')
+  ctx.command('ccbc', '璀璨宝石').subcommand('.help', '查看帮助')
     .alias('璀璨宝石帮助')
     .action(async ({ session }) =>
     {
@@ -958,7 +994,7 @@ export function apply(ctx: Context, config: Config)
       const room = getRoomByUser(rooms, userId);
       const currentInfo = room ? `\n当前房间：${room.id} (${room.name})` : '';
 
-      return `正式璀璨宝石纯文本指令：\n1. splendor.create [房间名]\n2. splendor.join &lt;房间号&gt;\n3. splendor.room [&lt;房间号&gt;]\n4. splendor.start [&lt;房间号&gt;]\n5. splendor.status [&lt;房间号&gt;]\n6. splendor.take [&lt;房间号&gt;] red blue green\n7. splendor.buy [&lt;房间号&gt;] &lt;层级&gt; &lt;位置&gt;\n8. splendor.reserve [&lt;房间号&gt;] &lt;层级&gt; &lt;位置&gt;\n9. splendor.reserved [&lt;房间号&gt;]（查看自己的预留卡牌）\n10. splendor.end [&lt;房间号&gt;]\n11. splendor.kill [&lt;房间号&gt;]（仅房主可强制结束游戏）\n12. splendor.vote-end [&lt;房间号&gt;]（超过半数玩家同意后结束游戏）\n13. splendor.rules（查看游戏规则）\n\n指令别名：\n- 游戏状态 = splendor.status\n- 拿 = splendor.take\n- 购买卡牌 = splendor.buy\n- 预留卡牌 = splendor.reserve\n- 查看预留 = splendor.reserved\n- 结束回合 = splendor.end\n- 强制结束璀璨宝石 = splendor.kill\n- 璀璨宝石帮助 = splendor.help\n\n说明：在当前已开始的房间中，玩家可以直接省略房间号，如：splendor.take red blue green${currentInfo}`;
+      return `璀璨宝石指令帮助：\n每条指令都可以使用中文别名。当前房间内可省略房间号。${currentInfo}\n\n1. 创建房间\n   ccbc.create [房间名]\n   用途：创建新的游戏房间。\n   示例：ccbc.创建房间 玫瑰王座\n\n2. 加入房间\n   ccbc.join &lt;房间号&gt;\n   用途：加入尚未开始且未满员的房间。\n   示例：ccbc.加入房间 SPL-ABCD12\n\n3. 查看房间\n   ccbc.room [&lt;房间号&gt;]\n   用途：查看房间名称、房主、成员和游戏状态。\n   示例：ccbc.查看房间\n\n4. 开始游戏\n   ccbc.start [&lt;房间号&gt;]\n   用途：由房主开始 2 至 4 人游戏。\n   示例：ccbc.开始游戏\n\n5. 查看状态\n   ccbc.status [&lt;房间号&gt;]\n   用途：查看宝石池、牌桌、贵族牌和所有玩家状态。\n   示例：ccbc.游戏状态\n\n6. 拿宝石\n   ccbc.take [&lt;房间号&gt;] red blue green\n   用途：拿 1 枚、3 枚不同颜色，或 2 枚同色宝石。\n   示例：ccbc.拿 red blue green\n\n7. 弃置宝石\n   ccbc.discard [&lt;房间号&gt;] &lt;颜色…&gt;\n   用途：拿完宝石超过 10 枚时，弃掉多余筹码。\n   示例：ccbc.弃置宝石 red gold\n\n8. 购买卡牌\n   ccbc.buy [&lt;房间号&gt;] &lt;层级&gt; &lt;位置&gt;\n   用途：支付成本购买牌桌上的卡牌，获得声望和永久折扣。\n   示例：ccbc.购买卡牌 1 2\n\n9. 预留卡牌\n   ccbc.reserve [&lt;房间号&gt;] &lt;层级&gt; &lt;位置&gt;\n   用途：预留一张牌以后购买，最多预留 ${MAX_RESERVED_CARDS} 张。\n   示例：ccbc.预留卡牌 2 1\n\n10. 查看预留\n    ccbc.reserved [&lt;房间号&gt;]\n    用途：查看自己预留的卡牌和编号。\n    示例：ccbc.查看预留\n\n11. 购买预留卡\n    ccbc.buy-reserved [&lt;房间号&gt;] &lt;编号&gt;\n    用途：购买自己预留的卡牌。\n    示例：ccbc.购买预留卡 1\n\n12. 结束回合\n    ccbc.end [&lt;房间号&gt;]\n    用途：放弃当前行动，直接轮到下一位玩家。\n    示例：ccbc.结束回合\n\n13. 强制结束游戏\n    ccbc.kill [&lt;房间号&gt;]\n    用途：仅房主可直接结束房间并查看最终排名。\n    示例：ccbc.强制结束璀璨宝石\n\n14. 投票结束游戏\n    ccbc.vote-end [&lt;房间号&gt;]\n    用途：发起结束投票，超过半数玩家同意后结束游戏。\n    示例：ccbc.投票结束游戏\n\n15. 查看游戏规则\n    ccbc.rules\n    用途：查看新手规则、卡牌规则和获胜方式。\n    示例：ccbc.游戏规则\n\n16. 查看帮助\n    ccbc.help\n    用途：查看所有指令、中文别名和使用说明。\n    示例：ccbc.璀璨宝石帮助`;
     });
 
 }
